@@ -1,0 +1,5 @@
+{
+  "name": "CTMS Fusion Analysis Monitoring",
+  "description": "A real-time transaction analysis dashboard for detecting money laundering and terrorist financing.",
+  "requestFramePermissions": []
+}

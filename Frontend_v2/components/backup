@@ -1,0 +1,198 @@
+{/* Main Dashboard */}
+      <div className="lg:col-span-3 space-y-6 overflow-auto pr-2">
+        {selectedCustomer && (
+          <>
+            {/* Header Card */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-6 shadow-sm">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
+                    {selectedCustomer.name}
+                    {selectedCustomer.isSanctioned && (
+                      <span className="flex items-center gap-1 bg-red-600 text-white text-xs px-3 py-1 rounded-full animate-pulse">
+                        <AlertOctagon className="w-3 h-3" /> MATCH FOUND
+                      </span>
+                    )}
+                  </h1>
+                  <div className="flex items-center gap-4 mt-2 text-sm text-slate-500 dark:text-slate-400">
+                    <span className="flex items-center gap-1"><Fingerprint className="w-4 h-4" /> {selectedCustomer.id}</span>
+                    <span className="flex items-center gap-1"><Users className="w-4 h-4" /> {selectedCustomer.occupation}</span>
+                    <span className="flex items-center gap-1"><History className="w-4 h-4" /> Account Age: {selectedCustomer.accountAgeDays} days</span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm text-slate-500 dark:text-slate-400 mb-1">Composite Risk Score</div>
+                  <div className={`text-3xl font-bold font-mono ${
+                    selectedCustomer.riskScore > 80 ? 'text-red-600 dark:text-red-500' : 
+                    selectedCustomer.riskScore > 50 ? 'text-orange-600 dark:text-orange-500' : 'text-green-600 dark:text-green-500'
+                  }`}>
+                    {selectedCustomer.riskScore}/100
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Risk Factor Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* 1. Peer Group Analysis */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-sm">
+                <div className="mb-4 flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-semibold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                      <Users className="w-5 h-5 text-indigo-500 dark:text-indigo-400" />
+                      Peer Group Behavior
+                    </h3>
+                    <p className="text-xs text-slate-500">Vs. {selectedCustomer.occupation}s in {selectedCustomer.region}</p>
+                  </div>
+                </div>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={peerData} layout="vertical" margin={{ left: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" strokeOpacity={0.2} horizontal={false} />
+                      <XAxis type="number" stroke="#64748b" fontSize={12} />
+                      <YAxis dataKey="metric" type="category" stroke="#94a3b8" fontSize={12} width={80} />
+                      <Tooltip 
+                         cursor={{fill: '#334155', opacity: 0.1}}
+                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
+                      />
+                      <Legend />
+                      <Bar dataKey="Customer" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={20} />
+                      <Bar dataKey="Peer Average" fill="#94a3b8" radius={[0, 4, 4, 0]} barSize={20} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-2 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-950 p-2 rounded">
+                  Analysis: Customer transaction value deviates by <span className="text-red-600 dark:text-red-400 font-bold">{Math.abs((selectedCustomer.avgTransactionValue - selectedCustomer.peerGroupAvgTransactionValue) / selectedCustomer.peerGroupAvgTransactionValue * 100).toFixed(0)}%</span> from peer group baseline.
+                </div>
+              </div>
+
+              {/* 2. Time Series Gap Analysis */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-sm">
+                 <div className="mb-4">
+                    <h3 className="text-lg font-semibold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                      <Clock className="w-5 h-5 text-orange-500 dark:text-orange-400" />
+                      Time Series Gap Analysis
+                    </h3>
+                    <p className="text-xs text-slate-500">Detecting "Zombie Account" patterns and dormancy</p>
+                  </div>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={gapAnalysisData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" strokeOpacity={0.2} vertical={false} />
+                        <XAxis dataKey="month" stroke="#64748b" fontSize={12} />
+                        <YAxis stroke="#64748b" fontSize={12} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
+                        />
+                        <Line type="stepAfter" dataKey="activity" stroke="#f97316" strokeWidth={2} dot={false} name="Activity Level" />
+                        <Line type="monotone" dataKey="threshold" stroke="#ef4444" strokeDasharray="5 5" strokeWidth={1} dot={false} name="Dormancy Threshold" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  {false && (
+                     <div className="mt-2 flex items-center gap-2 text-xs text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 p-2 rounded">
+                        <Activity className="w-4 h-4" />
+                        <span>Alert: Account dormant for 6+ months then sudden high-value activity.</span>
+                     </div>
+                  )}
+              </div>
+
+              {/* 3. KYC Integrity */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-sm">
+                <div className="mb-4">
+                  <h3 className="text-lg font-semibold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                    <UserCheck className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />
+                    KYC Data Integrity
+                  </h3>
+                  <p className="text-xs text-slate-500">Completeness and Uniqueness Checks</p>
+                </div>
+                <div className="flex items-center justify-center h-48 relative">
+                   {/* Custom Circular Progress */}
+                   <div className="relative w-32 h-32">
+                      <svg className="w-full h-full" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="45" fill="none" stroke="#e2e8f0" strokeWidth="10" className="dark:stroke-slate-800" />
+                        <circle 
+                          cx="50" cy="50" r="45" fill="none" stroke={selectedCustomer.kycIntegrity > 0.9 ? "#10b981" : "#eab308"} strokeWidth="10"
+                          strokeDasharray={`${selectedCustomer.kycIntegrity * 283} 283`}
+                          transform="rotate(-90 50 50)"
+                          className="transition-all duration-1000 ease-out"
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center flex-col">
+                        <span className="text-2xl font-bold text-slate-900 dark:text-white">{(selectedCustomer.kycIntegrity * 100).toFixed(0)}%</span>
+                        <span className="text-[10px] text-slate-500">Score</span>
+                      </div>
+                   </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-4 text-xs">
+                   <div className="flex justify-between p-2 bg-slate-50 dark:bg-slate-950 rounded">
+                      <span className="text-slate-500">Identity Verify</span>
+                      <span className="text-green-600 dark:text-green-400">Passed</span>
+                   </div>
+                   <div className="flex justify-between p-2 bg-slate-50 dark:bg-slate-950 rounded">
+                      <span className="text-slate-500">Address Match</span>
+                      <span className={selectedCustomer.kycIntegrity > 0.85 ? "text-green-600 dark:text-green-400" : "text-yellow-600 dark:text-yellow-400"}>
+                        {selectedCustomer.kycIntegrity > 0.85 ? "Verified" : "Partial"}
+                      </span>
+                   </div>
+                   <div className="flex justify-between p-2 bg-slate-50 dark:bg-slate-950 rounded">
+                      <span className="text-slate-500">UBO Declared</span>
+                      <span className="text-green-600 dark:text-green-400">Yes</span>
+                   </div>
+                   <div className="flex justify-between p-2 bg-slate-50 dark:bg-slate-950 rounded">
+                      <span className="text-slate-500">Doc Expiry</span>
+                      <span className="text-slate-700 dark:text-slate-200">2028</span>
+                   </div>
+                </div>
+              </div>
+
+              {/* 4. Sanctions & Watchlist */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-sm relative overflow-hidden">
+                <div className="mb-4 z-10 relative">
+                  <h3 className="text-lg font-semibold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                    <ShieldCheck className="w-5 h-5 text-red-500 dark:text-red-400" />
+                    Sanction & Watchlist
+                  </h3>
+                  <p className="text-xs text-slate-500">Global compliance database match</p>
+                </div>
+                
+                {selectedCustomer.isSanctioned ? (
+                  <div className="h-full flex flex-col justify-center items-center text-center z-10 relative pb-10">
+                     <div className="w-16 h-16 bg-red-100 dark:bg-red-500/20 rounded-full flex items-center justify-center mb-4 animate-pulse">
+                        <AlertOctagon className="w-8 h-8 text-red-500" />
+                     </div>
+                     <h4 className="text-xl font-bold text-red-500">POSITIVE MATCH</h4>
+                     <p className="text-sm text-red-600 dark:text-red-300 mt-2">Entity appears on OFAC/SDN List</p>
+                     <div className="mt-6 w-full">
+                       <button className="w-full py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium text-sm transition-colors">
+                         Generate SAR Report
+                       </button>
+                     </div>
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col justify-center items-center text-center pb-10">
+                     <div className="w-16 h-16 bg-green-100 dark:bg-green-500/10 rounded-full flex items-center justify-center mb-4">
+                        <ShieldCheck className="w-8 h-8 text-green-500" />
+                     </div>
+                     <h4 className="text-lg font-bold text-green-500">CLEAN STATUS</h4>
+                     <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">No matches found in global databases.</p>
+                     <div className="mt-6 text-xs text-slate-500">
+                        Last screened: {new Date().toLocaleDateString()}
+                     </div>
+                  </div>
+                )}
+              </div>
+            
+            
+            </div>
+          </>
+        )}
+      </div>
+
+
+
+
+<p style={styles.summaryText}>
+            ID: {data.id} | Type: {data.transaction_type} | Time: {data.transaction_time}
+          </p>

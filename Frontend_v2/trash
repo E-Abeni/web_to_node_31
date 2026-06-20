@@ -1,0 +1,64 @@
+// Simulate Real-time Data Feed
+  useEffect(() => {
+    // Initial Population
+    const initialCustomers = Array.from({ length: 25 }, generateCustomer);
+    setCustomers(initialCustomers);
+
+    const interval = setInterval(() => {
+      // 1. Pick a random customer
+      const customerIndex = Math.floor(Math.random() * initialCustomers.length);
+      const customer = initialCustomers[customerIndex];
+      
+      // 2. Generate Transaction
+      const newTx = generateTransaction(customer);
+      
+      // 3. Update Transactions State (Keep last 100 for performance in UI)
+      setTransactions(prev => [newTx, ...prev].slice(0, 100));
+      
+      // 4. Update Stats
+      setStats(prev => ({
+        ...prev,
+        transactionsProcessed: prev.transactionsProcessed + 1,
+        messagesInQueue: Math.floor(Math.random() * 50),
+        processingSpeed: 800 + Math.floor(Math.random() * 100),
+        flaggedCount: prev.flaggedCount + (newTx.riskLevel === RiskLevel.HIGH ? 1 : 0),
+        cpuUsage: Math.floor(Math.random() * 40) + 20, // 20-60%
+        ramUsage: Math.floor(Math.random() * 20) + 50  // 50-70%
+      }));
+
+      // 5. Check for STR Generation
+      if (newTx.riskLevel === RiskLevel.CRITICAL || (newTx.riskLevel === RiskLevel.HIGH && Math.random() > 0.5)) {
+        const newSTR = generateSTR(newTx, customer);
+        setStrs(prev => [newSTR, ...prev]);
+      }
+
+      // 6. Update Volume History (simulated 5-sec aggregation)
+      setVolumeHistory(prev => {
+        const now = new Date();
+        const timeStr = `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`;
+        const newPoint = {
+          time: timeStr,
+          count: Math.floor(Math.random() * 50) + 100, // Simulated volume
+          riskScoreAvg: Math.floor(Math.random() * 30) + 20 // Simulated risk baseline
+        };
+        return [...prev, newPoint].slice(-20); // Keep last 20 points
+      });
+
+      // 7. Simulate Live Customer Risk Updates (Drift)
+      setCustomers(prev => {
+        return prev.map((c, idx) => {
+          if (idx === customerIndex || Math.random() > 0.9) {
+             // Drastic change for demo purposes if triggered
+             const newScore = Math.min(100, Math.max(0, c.riskScore + (Math.random() > 0.5 ? 2 : -2)));
+             let level = RiskLevel.LOW;
+             if (newScore > 50) level = RiskLevel.MEDIUM;
+             if (newScore > 80) level = RiskLevel.HIGH;
+             if (newScore > 95) level = RiskLevel.CRITICAL;
+             
+             return { ...c, riskScore: Math.floor(newScore), riskLevel: level };
+          }
+          return c;
+        });
+      });
+
+    }, 2000); // New data every 2 seconds
