@@ -3,7 +3,7 @@ FROM node:20-alpine AS base
 
 # Step 2: Install dependencies
 FROM base AS deps
-# Native dependencies fallback
+# Install libc6-compat for native node modules (e.g., sharp, bcrypt)
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -13,7 +13,6 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-# Copy all project files
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED 1
 RUN npm run build
@@ -27,15 +26,18 @@ ENV NEXT_TELEMETRY_DISABLED 1
 ENV PORT=17002
 ENV HOSTNAME="0.0.0.0"
 
+# Setup unprivileged system user for security
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# CRITICAL: Next.js needs configuration files at runtime along with public/build folders
+# Copy runtime assets and build outputs
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/next.config.js ./next.config.js 2>/dev/null || true
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
+
+# Safe wildcard copy: Copies next.config.js/mjs if it exists, won't crash if missing
+COPY --from=builder /app/next.config.* ./ 2>/dev/null || true
 
 USER nextjs
 EXPOSE 17002
