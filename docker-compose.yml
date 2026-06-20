@@ -1,16 +1,28 @@
 services:
-  backend-service:
+  new-profile-web-portal:
     build:
-      context: ./Backend_v2
+      context: ./profile-web-portal
+      dockerfile: Dockerfile
+    container_name: ProfileWebPortal
     restart: always
     ports:
-      - "3002:3002"
+      - "17002:17002"
+    environment:
+      - NODE_ENV=production
 
-  monitoring-service:
-    build:
-      context: ./Frontend_v2
-    restart: always
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend-service
+    new-profile-backend-service:
+      build:
+        context: ./profile_backend
+        dockerfile: Dockerfile
+      container_name: ProfileBackendService
+      restart: always
+      ports:
+      - "17004:17004"
+      volumes:
+        # Mounts only the main.py file from your host to the container
+        - ./profile_backend/main.py:/app/main.py
+      command: uvicorn main:app --host 0.0.0.0 --port 17004 --reload
+
+
+  
+    

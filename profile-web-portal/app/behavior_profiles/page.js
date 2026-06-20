@@ -8,7 +8,7 @@ import {
 } from "recharts";
 import ReactMarkdown from 'react-markdown';
 
-const API_BASE = "http://172.20.137.129:17004";
+const API_BASE = "http://172.27.23.130:17004";
 
 const fmt = (n, d = 0) => n == null ? "—" : Number(n).toLocaleString("en-US", { maximumFractionDigits: d });
 const fmtPct = (n) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;

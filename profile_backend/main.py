@@ -15,7 +15,7 @@ from datetime import datetime
 
 DB_DSN = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:admin@172.20.137.129:5432/postgres",
+    "postgresql://postgres:admin@172.27.23.130:5432/postgres",
 )
 
 pool: asyncpg.Pool | None = None
