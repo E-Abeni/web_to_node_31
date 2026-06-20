@@ -10,18 +10,18 @@ services:
     environment:
       - NODE_ENV=production
 
-    new-profile-backend-service:
-      build:
-        context: ./profile_backend
-        dockerfile: Dockerfile
-      container_name: ProfileBackendService
-      restart: always
-      ports:
-      - "17004:17004"
-      volumes:
-        # Mounts only the main.py file from your host to the container
-        - ./profile_backend/main.py:/app/main.py
-      command: uvicorn main:app --host 0.0.0.0 --port 17004 --reload
+  new-profile-backend-service:
+    build:
+      context: ./profile_backend
+      dockerfile: Dockerfile
+    container_name: ProfileBackendService
+    restart: always
+    ports:
+    - "17004:17004"
+    volumes:
+      # Mounts only the main.py file from your host to the container
+      - ./profile_backend/main.py:/app/main.py
+    command: uvicorn main:app --host 0.0.0.0 --port 17004 --reload
 
 
   
