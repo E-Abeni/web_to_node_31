@@ -1,0 +1,12 @@
+services:
+  next-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ProfileWebPortal
+    restart: always
+    ports:
+      - "17002:17002"
+    environment:
+      - NODE_ENV=production
+    
