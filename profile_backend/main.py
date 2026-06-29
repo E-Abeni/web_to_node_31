@@ -1,74 +1,96 @@
-from fastapi import FastAPI, Query, HTTPException, Depends
+from fastapi import FastAPI, Query, HTTPException, Depends, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional, Any
+from typing import Optional, List, Dict, Any
 import asyncpg
 import os
 import json
 import math
 from contextlib import asynccontextmanager
 from datetime import datetime
-
+import jwt  # Installed via: pip install "PyJWT[cryptography]"
 
 # ---------------------------------------------------------------------------
-# Database connection pool
+# Global Environment & System Settings
 # ---------------------------------------------------------------------------
-
 DB_DSN = os.getenv(
     "DATABASE_URL",
     "postgresql://postgres:admin@172.27.23.130:5432/postgres",
 )
 
-pool: asyncpg.Pool | None = None
+# Authentication server endpoint for token refreshes or status checks
+CTMS_AUTH_URL = "http://172.27.23.213:3001" 
 
+# Provided EC P-256 Public Key for local cryptographic verification
+CTMS_PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjM98cnQ+950yGc1dtiXRdFj0tsrt
++zfFs0gRGyJZfWagqcb/aW9oFmxgjikMJdA8AYsFARX8b+OZCqgNdkvjDQ==
+-----END PUBLIC KEY-----"""
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global pool
-    pool = await asyncpg.create_pool(dsn=DB_DSN, min_size=2, max_size=10)
-    yield
-    await pool.close()
-
-
-app = FastAPI(
-    title="Customer Profile API",
-    description="Flexible search, filter, and pagination over v3_customer_profile",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+security = HTTPBearer()
 
 # ---------------------------------------------------------------------------
-# Helpers
+# DRBAC Security Guard Class (Middleware Layer)
 # ---------------------------------------------------------------------------
+class SecurityGuard:
+    """
+    Enforces CTMS local verification parameters: Algorithm ES256, 
+    issuer ctms-auth, audience ctms-api, and permission checks.
+    """
+    def __init__(self, required_permission: str):
+        self.required_permission = required_permission
 
+    def __call__(self, credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
+        token = credentials.credentials
+        
+        try:
+            # Verify ES256 signature, issuer (iss), audience (aud), and expiration (exp)
+            payload = jwt.decode(
+                token,
+                CTMS_PUBLIC_KEY,
+                algorithms=["ES256"],
+                audience="ctms-api",  # 'aud' must equal ctms-api
+                issuer="ctms-auth"    # 'iss' must equal ctms-auth
+            )
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+        except jwt.InvalidSignatureError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+        # Enforce Access Token constraint (rejects refresh tokens)
+        if payload.get("token_type") != "access":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Wrong token type for API call")
+
+        # Verify Endpoint Permissions against DRBAC claims array
+        permissions: List[str] = payload.get("permissions", [])
+        if self.required_permission not in permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, 
+                detail="Insufficient permissions"
+            )
+
+        # Build & map context back to route for audits
+        return {
+            "user_id": payload.get("sub"),
+            "role": payload.get("role"),
+            "entity_id": payload.get("entity_id"),
+            "permissions": permissions
+        }
+
+# ---------------------------------------------------------------------------
+# Database Helpers & Validation
+# ---------------------------------------------------------------------------
 TABLE = "v6_customer_profile"
 
-# Columns that support free-text ILIKE search
 SEARCHABLE_TEXT_COLUMNS = [
-    "account_number",
-    "NAMES",
-    "FULL_NAMES",
-    "OCCUPATIONS",
-    "ACCOUNT_TYPES",
-    "BRANCHES",
-    "GENDERS",
-    "PHONE_NUMBERS",
-    "KYC_EXTENDED_JSON",
-    "beneficiaries_list",
-    "conducting_manner_list",
-    "branch_list",
-    "currency_list",
-    "time_of_day_profile_list",
+    "account_number", "NAMES", "FULL_NAMES", "OCCUPATIONS", "ACCOUNT_TYPES",
+    "BRANCHES", "GENDERS", "PHONE_NUMBERS", "KYC_EXTENDED_JSON",
+    "beneficiaries_list", "conducting_manner_list", "branch_list",
+    "currency_list", "time_of_day_profile_list",
 ]
 
-# Numeric columns that support range filters (min_<col> / max_<col>)
 NUMERIC_COLUMNS = [
     "sent_amount_total", "sent_amount_average", "sent_amount_std", "sent_amount_count",
     "recieve_amount_total", "recieve_amount_average", "recieve_amount_std", "recieve_amount_count",
@@ -96,43 +118,56 @@ NUMERIC_COLUMNS = [
 ]
 
 VALID_COLUMNS = set(SEARCHABLE_TEXT_COLUMNS + NUMERIC_COLUMNS + [
-    "last_received_activity_timestamp",
-    "last_sent_activity_timestamp",
-    "last_activity_timestamp",
-    "gap_between_last_received_and_sent",
-    "weekend_receive_to_send_ratio",
-    "workday_receive_to_send_ratio",
+    "last_received_activity_timestamp", "last_sent_activity_timestamp",
+    "last_activity_timestamp", "gap_between_last_received_and_sent",
+    "weekend_receive_to_send_ratio", "workday_receive_to_send_ratio",
     "weekend_vs_workday_receive_send_ratio_comp",
 ])
 
 SORT_DIRECTIONS = {"asc", "desc"}
 
+pool: asyncpg.Pool | None = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global pool
+    pool = await asyncpg.create_pool(dsn=DB_DSN, min_size=2, max_size=10)
+    yield
+    await pool.close()
+
+app = FastAPI(
+    title="Customer Profile API",
+    description="Flexible search, filter, and pagination over v3_customer_profile",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 async def get_db() -> asyncpg.Pool:
     if pool is None:
         raise HTTPException(status_code=503, detail="Database pool not ready")
     return pool
 
-
 def _safe_column(col: str) -> str:
-    """Ensure a column name is valid to prevent SQL injection."""
     if col not in VALID_COLUMNS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown column '{col}'. "
-                   f"Valid columns: {sorted(VALID_COLUMNS)}",
+            detail=f"Unknown column '{col}'. Valid columns: {sorted(VALID_COLUMNS)}",
         )
     return f'"{col}"'
 
-
 def _serialize_row(row: asyncpg.Record) -> dict:
-    """Convert a DB row to a plain dict, parsing embedded JSON strings."""
     result = {}
     json_keys = {
-        "time_of_day_profile_list", "beneficiaries_list",
-        "conducting_manner_list", "branch_list", "currency_list",
-        "NAMES", "FULL_NAMES", "OCCUPATIONS", "ACCOUNT_TYPES",
-        "BRANCHES", "GENDERS", "PHONE_NUMBERS", "KYC_EXTENDED_JSON",
+        "time_of_day_profile_list", "beneficiaries_list", "conducting_manner_list", 
+        "branch_list", "currency_list", "NAMES", "FULL_NAMES", "OCCUPATIONS", 
+        "ACCOUNT_TYPES", "BRANCHES", "GENDERS", "PHONE_NUMBERS", "KYC_EXTENDED_JSON",
     }
     for key, value in dict(row).items():
         if value is not None and key in json_keys and isinstance(value, str):
@@ -143,48 +178,29 @@ def _serialize_row(row: asyncpg.Record) -> dict:
         result[key] = value
     return result
 
-
 # ---------------------------------------------------------------------------
-# Routes
+# Authenticated & Authorized Routes
 # ---------------------------------------------------------------------------
 
 @app.get("/customers", summary="List, filter, search and paginate customer profiles")
 async def list_customers(
-    # --- Pagination ---
-    page: int = Query(1, ge=1, description="Page number (1-based)"),
-    page_size: int = Query(20, ge=1, le=500, description="Records per page (max 500)"),
-
-    # --- Full-text search across all searchable columns ---
-    search: Optional[str] = Query(None, description="Free-text search across account/name/KYC fields"),
-
-    # --- Exact / partial match on specific columns ---
-    account_number: Optional[str] = Query(None, description="Exact account number"),
-    account_type: Optional[str] = Query(None, description="ILIKE match on ACCOUNT_TYPES JSON field"),
-    gender: Optional[str] = Query(None, description="ILIKE match on GENDERS JSON field"),
-    branch: Optional[str] = Query(None, description="ILIKE match on BRANCHES JSON field"),
-    name: Optional[str] = Query(None, description="ILIKE match on NAMES JSON field"),
-    currency: Optional[str] = Query(None, description="ILIKE match inside currency_list JSON field"),
-    conducting_manner: Optional[str] = Query(None, description="ILIKE match inside conducting_manner_list JSON field"),
-
-    # --- Numeric range filters (any numeric column) ---
-    # Usage: min_sent_amount_total=1000 & max_sent_amount_total=500000
-    # These are parsed generically from query params in the route body below.
-
-    # --- Sorting ---
-    sort_by: str = Query("account_number", description="Column to sort by"),
-    sort_dir: str = Query("asc", description="Sort direction: asc or desc"),
-
-    # --- Column selection ---
-    fields: Optional[str] = Query(
-        None,
-        description="Comma-separated list of columns to return. Omit to return all.",
-    ),
-
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=500),
+    search: Optional[str] = Query(None),
+    account_number: Optional[str] = Query(None),
+    account_type: Optional[str] = Query(None),
+    gender: Optional[str] = Query(None),
+    branch: Optional[str] = Query(None),
+    name: Optional[str] = Query(None),
+    currency: Optional[str] = Query(None),
+    conducting_manner: Optional[str] = Query(None),
+    sort_by: str = Query("account_number"),
+    sort_dir: str = Query("asc"),
+    fields: Optional[str] = Query(None),
     db: asyncpg.Pool = Depends(get_db),
-
-    # Catch-all for dynamic min_<col> / max_<col> params is handled via Request below
+    # Enforce token validation and require "SearchPersons" permission
+    current_user: dict = Depends(SecurityGuard("SearchPersons"))
 ) -> dict[str, Any]:
-    # Validated sort
     if sort_dir.lower() not in SORT_DIRECTIONS:
         raise HTTPException(status_code=400, detail="sort_dir must be 'asc' or 'desc'")
     safe_sort = _safe_column(sort_by)
@@ -196,15 +212,11 @@ async def list_customers(
         args.append(value)
         conditions.append(condition.replace("?", f"${len(args)}"))
 
-    # --- Full-text search ---
     if search:
-        sub = " OR ".join(
-            f'"{col}"::text ILIKE ${len(args) + 1}' for col in SEARCHABLE_TEXT_COLUMNS
-        )
+        sub = " OR ".join(f'"{col}"::text ILIKE ${len(args) + 1}' for col in SEARCHABLE_TEXT_COLUMNS)
         args.append(f"%{search}%")
         conditions.append(f"({sub})")
 
-    # --- Exact / partial filters ---
     if account_number:
         _add('"account_number" = ?', account_number)
     if name:
@@ -220,7 +232,6 @@ async def list_customers(
     if conducting_manner:
         _add('"conducting_manner_list"::text ILIKE ?', f"%{conducting_manner}%")
 
-    # --- Column projection ---
     if fields:
         selected = [f.strip() for f in fields.split(",") if f.strip()]
         col_clause = ", ".join(_safe_column(c) for c in selected)
@@ -243,34 +254,26 @@ async def list_customers(
 
     return {
         "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total_records": total,
+            "page": page, "page_size": page_size, "total_records": total,
             "total_pages": math.ceil(total / page_size) if total else 0,
-            "has_next": (page * page_size) < total,
-            "has_prev": page > 1,
+            "has_next": (page * page_size) < total, "has_prev": page > 1,
         },
         "filters_applied": {
-            "search": search,
-            "account_number": account_number,
-            "name": name,
-            "account_type": account_type,
-            "gender": gender,
-            "branch": branch,
-            "currency": currency,
-            "conducting_manner": conducting_manner,
-            "sort_by": sort_by,
-            "sort_dir": sort_dir,
+            "search": search, "account_number": account_number, "name": name,
+            "account_type": account_type, "gender": gender, "branch": branch,
+            "currency": currency, "conducting_manner": conducting_manner,
+            "sort_by": sort_by, "sort_dir": sort_dir,
         },
         "data": [_serialize_row(r) for r in rows],
     }
 
-
 @app.get("/customers/{account_number}", summary="Get a single customer profile by account number")
 async def get_customer(
     account_number: str,
-    fields: Optional[str] = Query(None, description="Comma-separated columns to return"),
+    fields: Optional[str] = Query(None),
     db: asyncpg.Pool = Depends(get_db),
+    # Enforce token validation and require "SearchPersons" permission
+    current_user: dict = Depends(SecurityGuard("SearchPersons"))
 ) -> dict[str, Any]:
     if fields:
         selected = [f.strip() for f in fields.split(",") if f.strip()]
@@ -288,24 +291,24 @@ async def get_customer(
 
     return _serialize_row(row)
 
-
 @app.get("/customers/range-filter/query", summary="Filter by numeric range on any numeric column")
 async def range_filter(
-    column: str = Query(..., description="Numeric column to filter on"),
-    min_value: Optional[float] = Query(None, description="Minimum value (inclusive)"),
-    max_value: Optional[float] = Query(None, description="Maximum value (inclusive)"),
+    column: str = Query(...),
+    min_value: Optional[float] = Query(None),
+    max_value: Optional[float] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=500),
     sort_by: str = Query("account_number"),
     sort_dir: str = Query("asc"),
     fields: Optional[str] = Query(None),
     db: asyncpg.Pool = Depends(get_db),
+    # Enforce token validation and require "SearchPersons" permission
+    current_user: dict = Depends(SecurityGuard("SearchPersons"))
 ) -> dict[str, Any]:
     if column not in NUMERIC_COLUMNS:
         raise HTTPException(
             status_code=400,
-            detail=f"'{column}' is not a filterable numeric column. "
-                   f"Choose from: {sorted(NUMERIC_COLUMNS)}",
+            detail=f"'{column}' is not a filterable numeric column.",
         )
     if min_value is None and max_value is None:
         raise HTTPException(status_code=400, detail="Provide at least min_value or max_value")
@@ -314,7 +317,6 @@ async def range_filter(
 
     safe_col = _safe_column(column)
     safe_sort = _safe_column(sort_by)
-
     conditions, args = [], []
 
     def _add(cond, val):
@@ -347,63 +349,45 @@ async def range_filter(
 
     return {
         "pagination": {
-            "page": page,
-            "page_size": page_size,
-            "total_records": total,
+            "page": page, "page_size": page_size, "total_records": total,
             "total_pages": math.ceil(total / page_size) if total else 0,
-            "has_next": (page * page_size) < total,
-            "has_prev": page > 1,
+            "has_next": (page * page_size) < total, "has_prev": page > 1,
         },
         "filter": {"column": column, "min_value": min_value, "max_value": max_value},
         "data": [_serialize_row(r) for r in rows],
     }
 
-
 @app.get("/meta/columns", summary="List all available columns and their filter capabilities")
-async def list_columns() -> dict[str, Any]:
+async def list_columns(
+    # Enforce token validation and require "SearchPersons" permission
+    current_user: dict = Depends(SecurityGuard("SearchPersons"))
+) -> dict[str, Any]:
     return {
         "numeric_columns": sorted(NUMERIC_COLUMNS),
         "searchable_text_columns": sorted(SEARCHABLE_TEXT_COLUMNS),
         "all_columns": sorted(VALID_COLUMNS),
     }
 
-
 @app.post("/sar-reports", summary="Submit a Suspicious Activity Report")
 async def create_sar(
     report: dict[str, Any],
     db: asyncpg.Pool = Depends(get_db),
+    # Enforce verification and require explicit permission to modify audit entities
+    current_user: dict = Depends(SecurityGuard("SubmitSAR"))
 ) -> dict[str, Any]:
-    """
-    Create a new SAR (Suspicious Activity Report) in the database.
-    
-    Expected payload:
-    {
-        "account_number": str,
-        "account_holder_name": str,
-        "risk_score": float,
-        "risk_level": str,
-        "suspicion_type": str,
-        "findings": str,
-        "risk_breakdown": list[dict],
-        "transaction_stats": dict,
-        "reported_at": str (ISO timestamp)
-    }
-    """
+    # Extract the actor user id for the mandatory system audit log requirement
+    actor_id = current_user["user_id"]
 
     reported_at_str = report.get("reported_at")
     reported_at_dt = None
 
     if reported_at_str:
         try:
-            # 1. Parse string to Aware datetime (has +00:00 info)
-            # 2. .replace(tzinfo=None) converts it to Naive (strips the +00:00)
             reported_at_dt = datetime.fromisoformat(
                 reported_at_str.replace('Z', '+00:00')
             ).replace(tzinfo=None) 
-            
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format for reported_at")
-
 
     sql = """
         INSERT INTO sar_reports (
@@ -416,13 +400,14 @@ async def create_sar(
             risk_breakdown,
             transaction_stats,
             reported_at,
+            actor_id,
             created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
         RETURNING id, created_at
     """
     
     async with db.acquire() as conn:
-        # Ensure sar_reports table exists
+        # Added tracking actor_id column directly to schema script for compliance tracking
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS sar_reports (
                 id SERIAL PRIMARY KEY,
@@ -435,6 +420,7 @@ async def create_sar(
                 risk_breakdown JSONB,
                 transaction_stats JSONB,
                 reported_at TIMESTAMP,
+                actor_id TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
@@ -450,6 +436,7 @@ async def create_sar(
             json.dumps(report.get("risk_breakdown", [])),
             json.dumps(report.get("transaction_stats", {})),
             reported_at_dt,
+            actor_id,  # Inserted actor_id context safely
         )
     
     return {
@@ -459,14 +446,15 @@ async def create_sar(
         "message": "SAR submitted successfully"
     }
 
-
 @app.get("/sar-reports", summary="List all SAR reports")
 async def list_sars(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    risk_level: Optional[str] = Query(None, description="Filter by risk level: LOW, MEDIUM, HIGH"),
+    risk_level: Optional[str] = Query(None),
     account_number: Optional[str] = Query(None),
     db: asyncpg.Pool = Depends(get_db),
+    # Guarding endpoint with explicit access permission
+    current_user: dict = Depends(SecurityGuard("ViewSAR"))
 ) -> dict[str, Any]:
     conditions = []
     args = []
@@ -486,7 +474,6 @@ async def list_sars(
     data_sql = f"SELECT * FROM sar_reports {where} ORDER BY created_at DESC LIMIT {page_size} OFFSET {offset}"
     
     async with db.acquire() as conn:
-        # Check if table exists
         table_exists = await conn.fetchval("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
